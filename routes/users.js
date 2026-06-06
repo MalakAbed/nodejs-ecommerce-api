@@ -4,27 +4,46 @@ const jwt = require('jsonwebtoken');
 const router = express.Router();
 
 const User = require('../models/User');
+const AppError = require('../utils/AppError');
+const catchAsync = require('../utils/catchAsync');
 
-router.get('/', async (req, res) =>{
+const restrictTo = require('../middlewares/restrictTo');
+const validateObjectId = require('../middlewares/validateObjectId');
+
+const { userLimiter, sensitiveLimiter, authLimiter } = require('../middlewares/rateLimiter');
+
+
+// GET all users
+router.get('/', userLimiter, catchAsync(async (req, res, next) => {
     const userList = await User.find().select('-passwordHash');
 
-    if(!userList) {
-        res.status(500).json({success:false})
+    if (!userList) {
+        return next(new AppError('Could not fetch users', 500));
     }
-    res.send(userList);
-})
 
-router.get ('/:id', async (req, res) => {
+    res.status(200).json({
+        status: 'success',
+        results: userList.length,
+        data: userList
+    });
+}));
+
+// GET user by ID
+router.get('/:id', validateObjectId, catchAsync(async (req, res, next) => {
     const user = await User.findById(req.params.id).select('-passwordHash');
 
     if (!user) {
-        res.status(500).json({ success: false, message: 'The user with the given ID not exists' })
+        return next(new AppError('User with the given ID not found', 404));
     }
-    res.status(200).send(user)
-    
-})
 
-router.post('/register', async (req, res) => {
+    res.status(200).json({
+        status: 'success',
+        data: user
+    });
+}));
+
+// POST register
+router.post('/register', catchAsync(async (req, res, next) => {
     let user = new User({
         name: req.body.name,
         email: req.body.email,
@@ -36,56 +55,71 @@ router.post('/register', async (req, res) => {
         zip: req.body.zip,
         city: req.body.city,
         country: req.body.country
-    })
+    });
 
     user = await user.save();
 
-    if (!user)
-        return res.status(404).send('User cannot be created')
-    res.send(user);
-})
+    if (!user) {
+        return next(new AppError('User cannot be created', 400));
+    }
 
-router.delete('/:id', (req, res) => {
-    User.findByIdAndRemove(req.params.id).then(user => {
-        if (user) {
-            return res.status(200).json({ success: true, message: 'User deleted successfully' })
-        } else {
-            return res.status(404).json({ success: false, message: 'User cannot find' })
-        }
-    }).catch(err => {
-        return res.status(400).json({ success: false, error: err })
-    })
-})
+    res.status(201).json({
+        status: 'success',
+        data: user
+    });
+}));
 
-router.post('/login', async (req, res) => {
-    const user = await User.findOne({ email: req.body.email})
+// POST login
+router.post('/login', authLimiter, catchAsync(async (req, res, next) => {
+    const user = await User.findOne({ email: req.body.email });
     const secret = process.env.secret;
 
-    if(!user) {
-        return res.status(400).send('User with given Email not found');
+    if (!user) {
+        return next(new AppError('User with given Email not found', 400));
     }
 
-    if(user && bcrypt.compareSync(req.body.password, user.passwordHash)) {
-        const token = jwt.sign({
-            userID: user.id,
-            isAdmin : user.isAdmin
-        }, secret, {expiresIn : '1d'} )
-        res.status(200).send({user: user.email, token: token});
-    } else {
-        res.status(400).send('Password is mismatch');
+    if (!bcrypt.compareSync(req.body.password, user.passwordHash)) {
+        return next(new AppError('Password is incorrect', 400));
     }
 
-    return res.status(200).send(user);
-})
+    const token = jwt.sign({
+        userID: user.id,
+        isAdmin: user.isAdmin
+    }, secret, { expiresIn: '1d' });
 
-router.get('/get/count', async (req, res) => {
-    const userCount = await User.countDocuments((count) => count);
-    if (!userCount) {
-        res.status(500), json({ success: false })
+    res.status(200).json({
+        status: 'success',
+        user: user.email,
+        token: token
+    });
+}));
+
+// DELETE user
+router.delete('/:id', sensitiveLimiter, validateObjectId, restrictTo('admin'), catchAsync(async (req, res, next) => {
+    const user = await User.findByIdAndRemove(req.params.id);
+
+    if (!user) {
+        return next(new AppError('User not found', 404));
     }
-    res.status(200).send({
+
+    res.status(200).json({
+        status: 'success',
+        message: 'User deleted successfully'
+    });
+}));
+
+// GET user count
+router.get('/get/count', catchAsync(async (req, res, next) => {
+    const userCount = await User.countDocuments();
+
+    if (userCount === undefined || userCount === null) {
+        return next(new AppError('Could not get user count', 500));
+    }
+
+    res.status(200).json({
+        status: 'success',
         userCount: userCount
     });
-})
+}));
 
 module.exports = router;

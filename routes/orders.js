@@ -1,10 +1,15 @@
 const express = require('express');
-const router = express();
+const router = express.Router();
 
 const Order = require('../models/order');
 const OrderItem = require('../models/order-item');
 
-router.get('/', async (req, res) => {
+const checkOwnership = require('../middlewares/checkOwnership');
+const AppError = require('../utils/AppError');
+const catchAsync = require('../utils/catchAsync');
+const { userLimiter, sensitiveLimiter, tenantLimiter } = require('../middlewares/rateLimiter');
+
+router.get('/', tenantLimiter, userLimiter, async (req, res) => {
     const orderList = await Order.find()
     .populate('user' ,'name').sort({'dateOrdered':-1})
     .populate({ 
@@ -18,16 +23,20 @@ router.get('/', async (req, res) => {
     res.send(orderList)
 })
 
-router.get('/:id', async (req, res) => {
-    const order = await Order.findById(req.params.id).populate('name', 'user');
-
+router.get('/:id', userLimiter, checkOwnership('Order', 'user'), catchAsync(async (req, res, next) => {
+  // نستخدم req.resource اللي حفظه checkOwnership بدل استعلام جديد
+    const order = req.resource;
+    
     if (!order) {
-        res.status(500).json({ success: false })
+        return next(new AppError('Order not found', 404));
     }
-    res.send(order)
-})
+    res.status(200).json({
+        status: 'success',
+        data: order
+    });
+}));
 
-router.post('/', async (req, res) => {
+router.post('/', sensitiveLimiter, async (req, res) => {
    
     const orderItemsIds = Promise.all(req.body.orderItems.map( async (orderItem) => {
         let newOrderItem = new OrderItem({
@@ -70,7 +79,7 @@ router.post('/', async (req, res) => {
     res.send(order);
 })
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', sensitiveLimiter, async (req, res) => {
     const order = await Order.findByIdAndUpdate(req.params.id, {
         status: req.body.status,
     }, {
@@ -82,7 +91,7 @@ router.put('/:id', async (req, res) => {
     res.send(order);
 })
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', sensitiveLimiter, (req, res) => {
     Order.findByIdAndRemove(req.params.id).then(async order => {
         if (order) {
             await order.orderItems.map(async orderItem =>{

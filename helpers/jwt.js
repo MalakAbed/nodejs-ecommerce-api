@@ -18,11 +18,9 @@ function authJwt() {
     })
 }
 
-async function isRevoked (req, payload, done){
-    if(!payload.isAdmin){
-        done(null, true)
-    } 
-
+async function isRevoked(req, payload, done) {
+    // ملاحظة: هاي الدالة محذوفة منطقياً، ال authorization صار في restrictTo
+    // بنخلّيها بس للتوافق، ما بترفض حدا
     done();
 }
 
